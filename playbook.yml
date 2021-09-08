@@ -1,0 +1,40 @@
+---
+- name: Setup schinel.li server
+  hosts: master
+  become: true
+  remote_user: root
+
+  vars:
+    kubeconfig: /etc/rancher/k3s/k3s.yaml
+
+  tasks:
+    - name: Install K3S with helm
+      shell:
+        cmd: curl -sfL https://get.k3s.io | sh -
+        creates:  /usr/local/bin/kubectl
+
+    - name: Install Helm
+      shell:
+        cmd: curl https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3 | bash
+        creates: /usr/local/bin/helm
+
+
+    #    - name: Uninstall K3S
+#      shell: '/usr/local/bin/k3s-uninstall.sh
+
+    - name: Add Traefik chart repo
+      community.kubernetes.helm_repository:
+        name: traefik
+        repo_url: https://helm.traefik.io/traefik
+
+    - name: Install Traefik
+      community.kubernetes.helm:
+        name: traefik
+        chart_ref: traefik/traefik
+        create_namespace: true
+        release_namespace: traefik
+      environment:
+        KUBECONFIG: "{{ kubeconfig }}"
+
+
+
