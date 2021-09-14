@@ -8,7 +8,7 @@
     kubeconfig: /etc/rancher/k3s/k3s.yaml
 
   tasks:
-    - name: Install K3S with helm
+    - name: Install K3S
       shell:
         cmd: curl -sfL https://get.k3s.io | sh -
         creates:  /usr/local/bin/kubectl
@@ -19,7 +19,7 @@
         creates: /usr/local/bin/helm
 
 
-    #    - name: Uninstall K3S
+#    - name: Uninstall K3S
 #      shell: '/usr/local/bin/k3s-uninstall.sh
 
     - name: Add Traefik chart repo
@@ -33,6 +33,7 @@
         chart_ref: traefik/traefik
         create_namespace: true
         release_namespace: traefik
+
       environment:
         KUBECONFIG: "{{ kubeconfig }}"
 
