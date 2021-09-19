@@ -52,13 +52,13 @@
         chart_ref: traefik/traefik
         release_namespace: default
         values:
-          dashboard:
-            enable: true
-            ingressRoute: true
-          ports:
-            traefik:
-              port: 9000
-              expose: true
+#          dashboard:
+#            enable: true
+#            ingressRoute: true
+#          ports:
+#            traefik:
+#              port: 9000
+#              expose: true
 
           additionalArguments:
             - "--certificatesresolvers.le-staging.acme.tlschallenge=true"
