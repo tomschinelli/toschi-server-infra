@@ -1,0 +1,105 @@
+---
+- name: Deploy Whoami demo app to schinel.li
+  hosts: master
+  become: true
+  remote_user: root
+  vars:
+    domain: whoami.traefik.schinel.li
+    state: present # absent to remove demo
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  tasks:
+    - name: Deployment
+      community.kubernetes.k8s:
+        state: "{{ state }}"
+        definition:
+          apiVersion: v1
+          kind: Deployment
+          metadata:
+            namespace: default
+            labels:
+              app: whoami
+            name: whoami
+          spec:
+            relicas: 1
+            selector:
+              matchLabels:
+                app: whoami
+            template:
+              metadata:
+                labels:
+                  app: whoami
+              spec:
+                containers:
+                  - name: whoami
+                    image: traefik/whoami:latest
+                    ports:
+                      - containerPort: 80
+
+    - name: Install Svc
+      community.kubernetes.k8s:
+        state: "{{ state }}"
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            namespace: default
+            name: whoami
+          spec:
+            type: ClusterIP
+            selector:
+              app: whoami
+            ports:
+              - port: 80
+
+    - name: Http Ingress
+      community.kubernetes.k8s:
+        state: "{{ state }}"
+        definition:
+          apiVersion: traefik.containo.us/v1alpha1
+          kind: IngressRoute
+          metadata:
+            namespace: default
+            name: whoami-http
+          spec:
+            entryPoints:
+              - web
+            routes:
+              - kind: Rule
+                match: "Host(`{{ domain }}`)"
+                services:
+                  - kind: Service
+                    name: whoami
+                    port: 80
+                middlewares:
+                  - name: default-redirectscheme@kubernetescrd
+
+    - name: Https Ingress
+      community.kubernetes.k8s:
+        state: "{{ state }}"
+        definition:
+          apiVersion: traefik.containo.us/v1alpha1
+          kind: IngressRoute
+          metadata:
+            namespace: default
+            name: whoami-https
+          spec:
+            entryPoints:
+              - websecure
+            routes:
+              - kind: Rule
+                match: "Host(`{{ domain }}`)"
+                services:
+                  - kind: Service
+                    name: whoami
+                    port: 80
+                middlewares:
+                  - name: default-security@kubernetescrd
+            tls:
+              certResolver: le
+              domains:
+                - main: "{{ domain }}"
+                  sans:
+                    - "{{ domain }}"
+              options:
+                name: tlsoptions

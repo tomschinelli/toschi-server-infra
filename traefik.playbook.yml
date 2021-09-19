@@ -1,0 +1,204 @@
+---
+- name: Setup schinel.li server
+  hosts: master
+  become: true
+  remote_user: root
+  vars:
+    email: tom.schinel@gmail.com
+    dashboardDomain: traefik.schinel.li
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  tasks:
+
+    - name: Load variables from encrypted file
+      include_vars:
+        file: secrets
+
+    - name: Install pip
+      apt:
+        name: python3-pip
+
+    - name: Install k8s req
+      pip:
+        name:
+          - openshift
+          - pyyaml
+          # fix for openshift not finding version
+          - "kubernetes==11.0.0"
+
+    - name: Install K3S
+      shell:
+        # need some research on how to setup traefik with k3s
+        cmd: curl -sfL https://get.k3s.io |  sh -s - --disable=traefik
+        creates:  /usr/local/bin/kubectl
+
+    - name: Install Helm
+      shell:
+        cmd: curl https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3 | bash
+        creates: /usr/local/bin/helm
+
+
+  #    - name: Uninstall K3S
+  #      shell: '/usr/local/bin/k3s-uninstall.sh
+
+    - name: Add Traefik chart repo
+      community.kubernetes.helm_repository:
+        name: traefik
+        repo_url: https://helm.traefik.io/traefik
+
+    - name: Install Traefik
+      community.kubernetes.helm:
+        name: traefik
+        chart_ref: traefik/traefik
+        release_namespace: default
+        values:
+          dashboard:
+            enable: true
+            ingressRoute: true
+          ports:
+            traefik:
+              port: 9000
+              expose: true
+
+          additionalArguments:
+            - "--certificatesresolvers.le-staging.acme.tlschallenge=true"
+            - "--certificatesresolvers.le-staging.acme.email={{ email }}"
+            - "--certificatesresolvers.le-staging.acme.storage=/data/acme.json"
+            - "--certificatesresolvers.le-staging.acme.caserver=https://acme-staging-v02.api.letsencrypt.org/directory"
+            - "--certificatesresolvers.le.acme.tlschallenge=true"
+            - "--certificatesresolvers.le.acme.email={{ email }}"
+            - "--certificatesresolvers.le.acme.storage=/data/acme.json"
+
+            # needed for traefik >= 2.5
+            - "--providers.kubernetescrd.allowCrossNamespace=true"
+          persistence:
+            enabled: true
+            fullnameOverride: "traefik"
+          logs:
+            general:
+              level: DEBUG
+
+
+
+    - name: Redirect Middleware
+      community.kubernetes.k8s:
+        state: present
+
+        definition:
+          apiVersion: traefik.containo.us/v1alpha1
+          kind: Middleware
+          metadata:
+            name: "redirectscheme"
+            namespace: default
+          spec:
+            redirectScheme:
+              scheme: https
+              permanent: true
+
+    - name: Security Middleware
+      community.kubernetes.k8s:
+        state: present
+
+        definition:
+          apiVersion: traefik.containo.us/v1alpha1
+          kind: Middleware
+          metadata:
+            name: "security"
+            namespace: default
+          spec:
+            headers:
+              frameDeny: true
+              sslRedirect: true
+              browserXssFilter: true
+              contentTypeNosniff: true
+              # HSTS HTTP Strict Transport Security
+              stsIncludeSubdomains: true
+              stsPreload: true
+              stsSeconds: 31536000
+
+    - name: TLSOption
+      community.kubernetes.k8s:
+        state: present
+
+        definition:
+          apiVersion: traefik.containo.us/v1alpha1
+          kind: TLSOption
+          metadata:
+            name: "tlsoptions"
+            namespace: default
+          spec:
+            minVersion: 'VersionTLS12'
+            curvePreferences:
+              - CurveP521
+              - CurveP384
+            sniStrict: true
+            cipherSuites:
+              - 'TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256'
+              - 'TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256'
+              - 'TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384'
+              - 'TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305'
+              - 'TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384'
+              - 'TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305'
+              - 'TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305'
+              - 'TLS_AES_256_GCM_SHA384'
+              - 'TLS_AES_128_GCM_SHA256'
+              - 'TLS_CHACHA20_POLY1305_SHA256'
+              - 'TLS_FALLBACK_SCSV'
+
+
+    - name: Admin Password
+      community.kubernetes.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: "admin-secret"
+            namespace: default
+          type: Opaque
+          data:
+            auth: "{{ passwd }}"
+
+    - name: Basic Auth for Admin
+      community.kubernetes.k8s:
+        state: present
+
+        definition:
+          apiVersion: traefik.containo.us/v1alpha1
+          kind: Middleware
+          metadata:
+            name: "admin-auth"
+            namespace: default
+          spec:
+            basicAuth:
+              secret: "admin-secret"
+
+    - name: Setup Traefik Dashboard
+      community.kubernetes.k8s:
+        state: present
+        definition:
+          apiVersion: traefik.containo.us/v1alpha1
+          kind: IngressRoute
+          metadata:
+            name: "traefik-dashboard-https"
+            namespace: default
+          spec:
+            entryPoints:
+              - websecure
+            routes:
+              - kind: Rule
+                match: "Host(`{{ dashboardDomain }}`)"
+                services:
+                  - kind: TraefikService
+                    name: api@internal
+                middlewares:
+                  - name: default-admin-auth@kubernetescrd
+                    namespace: default
+            tls:
+              certResolver: le
+              domains:
+                - main: "{{ dashboardDomain }}"
+                  sans:
+                    - "{{ dashboardDomain }}"
+              options:
+                name: tlsoptions
