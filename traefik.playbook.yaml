@@ -52,14 +52,6 @@
         chart_ref: traefik/traefik
         release_namespace: default
         values:
-#          dashboard:
-#            enable: true
-#            ingressRoute: true
-#          ports:
-#            traefik:
-#              port: 9000
-#              expose: true
-
           additionalArguments:
             - "--certificatesresolvers.le-staging.acme.tlschallenge=true"
             - "--certificatesresolvers.le-staging.acme.email={{ email }}"
@@ -69,14 +61,15 @@
             - "--certificatesresolvers.le.acme.email={{ email }}"
             - "--certificatesresolvers.le.acme.storage=/data/acme.json"
 
-            # needed for traefik >= 2.5
+            # fix for traefik >= 2.5
             - "--providers.kubernetescrd.allowCrossNamespace=true"
           persistence:
             enabled: true
             fullnameOverride: "traefik"
-          logs:
-            general:
-              level: DEBUG
+          metrics:
+            prometheus:
+              entryPoint: "traefik"
+
 
 
 
@@ -173,7 +166,7 @@
             basicAuth:
               secret: "admin-secret"
 
-    - name: Setup Traefik Dashboard
+    - name: Setup Traefik Dashboard Ingress
       community.kubernetes.k8s:
         state: present
         definition:
@@ -202,3 +195,41 @@
                     - "{{ dashboardDomain }}"
               options:
                 name: tlsoptions
+    ##########################################
+    #
+    # metrics
+    #
+    ##########################################
+    - name: Traefik Dashboard Service
+      community.kubernetes.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: traefik-dashboard
+            namespace: default
+            labels:
+              app.kubernetes.io/instance: traefik
+              app.kubernetes.io/name: traefik-dashboard
+          spec:
+            type: ClusterIP
+            ports:
+              - name: traefik
+                port: 9000
+                targetPort: traefik
+                protocol: TCP
+            selector:
+              app.kubernetes.io/instance: traefik
+              app.kubernetes.io/name: traefik
+    - name: Add Prometheus chart repo
+      community.kubernetes.helm_repository:
+        name: prometheus
+        repo_url: https://github.com/prometheus-community/helm-charts
+
+    - name: Install Prometheus
+      community.kubernetes.helm:
+        name: prometheus-stack
+        chart_ref: rometheus-community/kube-prometheus-stack
+        release_namespace: default
+        values-files: []

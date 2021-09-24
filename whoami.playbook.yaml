@@ -5,7 +5,7 @@
   remote_user: root
   vars:
     domain: whoami.traefik.schinel.li
-    state: present # absent to remove demo
+    state: absent # absent to remove demo
   environment:
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
   tasks:
